@@ -1,0 +1,5 @@
+homepage: "https://contimo.io/"
+documentation: "https://docs.contimo.app/platform-usage/conversion-tracking-with-gtm"
+versions:
+  - sha: c4620bd07ed800b377f091256b160a2ff76428b1
+    changeNotes: Initial release.
