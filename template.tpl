@@ -59,7 +59,8 @@ ___TEMPLATE_PARAMETERS___
         "paramValue": "init",
         "type": "EQUALS"
       }
-    ]
+    ],
+    "defaultValue": "sclid"
   },
   {
     "type": "SELECT",
@@ -160,76 +161,87 @@ ___TEMPLATE_PARAMETERS___
 ___SANDBOXED_JS_FOR_WEB_TEMPLATE___
 
 // Imports
-const queryPermission   = require('queryPermission');
+const queryPermission    = require('queryPermission');
 const getUrl             = require('getUrl');
 const localStorage       = require('localStorage');
 const getCookieValues    = require('getCookieValues');
 const setCookie          = require('setCookie');
 const sendPixel          = require('sendPixel');
-const logToConsole = require('logToConsole');
+const encodeUriComponent = require('encodeUriComponent');
+const logToConsole       = require('logToConsole');
+
 const STORAGE_KEY = 'contimo_clickId';
 
-
-
-  if (data.action === 'init') {
-    // Read clickId param and persist
-    logToConsole('init');
+function init(data) {
     if (queryPermission('get_url', 'query', data.clickid_param)) {
-      const clickId = getUrl('query', false, null, data.clickid_param);
-      logToConsole(clickId);
-      if (clickId) {
-        if (queryPermission('access_local_storage', 'write', STORAGE_KEY)) {
-          logToConsole(STORAGE_KEY, clickId);
-          localStorage.setItem(STORAGE_KEY, clickId);
-        } else if (queryPermission('set_cookies', STORAGE_KEY)) {
-          setCookie(STORAGE_KEY, clickId, { path: '/' });
-        }
+    const clickId = getUrl('query', false, null, data.clickid_param);
+    if (clickId) {
+      if (queryPermission('access_local_storage', 'write', STORAGE_KEY)) {
+        logToConsole(localStorage);
+        localStorage.setItem(STORAGE_KEY, clickId);
+      } else if (queryPermission('set_cookies', STORAGE_KEY)) {
+        setCookie(STORAGE_KEY, clickId, { path: '/' });
       }
     }
-    // Signal success
-    data.gtmOnSuccess();
   }
 
-  else if (data.action === 'track_conversion') {
+  data.gtmOnSuccess();
+}
+
+function trackConversion(data) {
     // Retrieve clickId
-    let clickId;
-    if (queryPermission('access_local_storage', 'read', STORAGE_KEY)) {
-      clickId = localStorage.getItem(STORAGE_KEY);
-    } else if (queryPermission('get_cookies', STORAGE_KEY)) {
-      const cookies = getCookieValues(STORAGE_KEY);
-      clickId = (cookies && cookies[0]);
-    }
-
-    if (!clickId) {
-      // Nothing to fire
-      data.gtmOnFailure();
-    } else {
-      // Build URL
-      let url = 'https://aj2438.online/at';
-      const params = [
-        'actionKey=b4e4e9ac23c8742163c2ffa1edd2e2fc-229-0',
-        'actionData=' + clickId
-      ];
-      if (data.conversion_type === 'purchase') {
-        params.push(
-          'cp.revenue=' +
-            (data.revenue || '') +
-            (data.revenue_currency || '')
-        );
-      }
-      params.push('cp.ct=' + data.conversion_type);
-      params.push('cp.source=gtm');
-      url += '?' + params.join('&');
-
-      // Fire pixel with callbacks
-      sendPixel(url, data.gtmOnSuccess, data.gtmOnFailure);
-    }
+  let clickId;
+  if (queryPermission('access_local_storage', 'read', STORAGE_KEY)) {
+    clickId = localStorage.getItem(STORAGE_KEY);
+  } else if (queryPermission('get_cookies', STORAGE_KEY)) {
+    const cookies = getCookieValues(STORAGE_KEY);
+    clickId = (cookies && cookies[0]);
   }
 
-  else {
-    // Unrecognized action
-    data.gtmOnFailure();
+  if (!clickId) {
+    // Nothing to fire
+    data.gtmOnSuccess();
+  } else {
+    // Build URL
+    let url = 'https://aj2438.online/at';
+    const params = [
+      'actionKey=b4e4e9ac23c8742163c2ffa1edd2e2fc-229-0',
+      'actionData=' + encodeUriComponent(clickId)
+    ];
+    if (data.conversion_type === 'purchase') {
+      params.push(
+        'cp.revenue=' +
+        encodeUriComponent((data.revenue || '') +
+                           (data.revenue_currency || ''))
+      );
+    }
+    params.push('cp.ct=' + encodeUriComponent(data.conversion_type));
+    
+    (data.params || []).forEach(function(kv) { 
+      let key = encodeUriComponent(kv.key);
+      let value = encodeUriComponent(kv.value);
+      params.push(['cp.', key, '=', value].join('')); 
+    });
+
+    params.push('cp.source=gtm');
+    
+
+    url += '?' + params.join('&');
+    logToConsole(url);
+    // Fire pixel with callbacks
+    sendPixel(url, data.gtmOnSuccess, data.gtmOnFailure);
   }
+}
+
+//logToConsole(data);
+if (data.action === 'init') {
+  init(data);
+} else if (data.action === 'track_conversion') {
+  trackConversion(data);
+} else {
+  // Unrecognized action
+  data.gtmOnFailure();
+}
 
 
 ___WEB_PERMISSIONS___
@@ -467,6 +479,9 @@ ___WEB_PERMISSIONS___
         }
       ]
     },
+    "clientAnnotations": {
+      "isEditedByUser": true
+    },
     "isRequired": true
   }
 ]
@@ -476,23 +491,53 @@ ___TESTS___
 
 scenarios:
 - name: Persists to Local Storage
-  code: "// Arrange\n//runTestSetup();\nconst mockData = { action: 'init', clickid_param:\
+  code: "// Arrange\nrunTestSetup();\nconst mockData = { action: 'init', clickid_param:\
     \ 'cid' };\n// Simulate finding ?cid=ABC123\n_stubUrlValue = 'https://localhost/?cid=ABC123';\n\
     \n// Act\nrunCode(mockData);\n\n// Assert\nassertApi('getUrl').wasCalledWith('query',\
     \ false, null, 'cid');  \nassertApi('localStorage.setItem').wasCalledWith('contimo_clickId',\
     \ 'ABC123');  \nassertApi('gtmOnSuccess').wasCalled();  "
+- name: Fire converstion (purchase) pixel
+  code: "const mockData = {\n  action: 'track_conversion', \n  conversion_type: 'purchase',\n\
+    \  revenue_currency: 'DKK',\n  revenue: '10',\n  gtmOnSuccess: function() { },\n\
+    \  gtmOnFailure: function() { }\n};\n\n_storage.contimo_clickId = 'ABC123';\n\n\
+    const expectedUrl = 'https://aj2438.online/at?actionKey=b4e4e9ac23c8742163c2ffa1edd2e2fc-229-0&actionData=ABC123&cp.revenue=10DKK&cp.ct=purchase&cp.source=gtm';\n\
+    \nmock('sendPixel', function(url, onSuccess, onFailure) {\n  assertThat(url).isEqualTo(expectedUrl);\n\
+    \  assertThat(typeof onSuccess).isEqualTo('function');\n  assertThat(typeof onFailure).isEqualTo('function');\n\
+    });\n\nrunCode(mockData);\n\nlogToConsole(mockData);\n\n// Verify that the tag\
+    \ finished successfully.\nassertApi('sendPixel').wasCalled();"
+- name: Fire converstion (qualified_visit) pixel
+  code: "const mockData = {\n  action: 'track_conversion', \n  conversion_type: 'qualified_visit',\n\
+    \  gtmOnSuccess: function() { },\n  gtmOnFailure: function() { }\n};\n\n_storage.contimo_clickId\
+    \ = 'ABC123';\n\nconst expectedUrl = 'https://aj2438.online/at?actionKey=b4e4e9ac23c8742163c2ffa1edd2e2fc-229-0&actionData=ABC123&cp.ct=qualified_visit&cp.source=gtm';\n\
+    \nmock('sendPixel', function(url, onSuccess, onFailure) {\n  assertThat(url).isEqualTo(expectedUrl);\n\
+    \  assertThat(typeof onSuccess).isEqualTo('function');\n  assertThat(typeof onFailure).isEqualTo('function');\n\
+    });\n\nrunCode(mockData);\n\nlogToConsole(mockData);\n\n// Verify that the tag\
+    \ finished successfully.\nassertApi('sendPixel').wasCalled();"
+- name: Make urlEscape & custom parameters
+  code: "const mockData = {\n  action: 'track_conversion', \n  conversion_type: 'purchase',\n\
+    \  revenue_currency: 'DKK',\n  revenue: '10',\n  params: [\n    { key: \"a\",\
+    \ value: \"b=\" }\n  ]\n};\n\n_storage.contimo_clickId = 'ABC&123';\n\nconst expectedUrl\
+    \ = 'https://aj2438.online/at?actionKey=b4e4e9ac23c8742163c2ffa1edd2e2fc-229-0&actionData=ABC%26123&cp.revenue=10DKK&cp.ct=purchase&cp.a=b%3D&cp.source=gtm';\n\
+    \nmock('sendPixel', function(url, onSuccess, onFailure) {\n  assertThat(url).isEqualTo(expectedUrl);\n\
+    \  assertThat(typeof onSuccess).isEqualTo('function');\n  assertThat(typeof onFailure).isEqualTo('function');\n\
+    });\n\nrunCode(mockData);\n\nlogToConsole(mockData);\n\n// Verify that the tag\
+    \ finished successfully.\nassertApi('sendPixel').wasCalled();"
 setup: |-
+  const logToConsole       = require('logToConsole');
+
   mock('queryPermission', (perm) => {
     return true;
   });
 
+  let _storage = {};
   let _stubUrlValue = '';
   mock('getUrl', (_type, _encode, _name, paramName) => {
+    logToConsole({_type: _type, _encode: _encode, _name: _name, paramName: paramName});
     return _stubUrlValue;
   });
 
-  const _storage = {};
-  mock('localStorage', {
+
+  mockObject('localStorage', {
     getItem: (key) => _storage[key] || null,
     setItem: (key, value) => { _storage[key] = value; }
   });
@@ -500,13 +545,13 @@ setup: |-
   mock('getCookieValues', (key) => _storage[key] ? [ _storage[key] ] : []);
   mock('setCookie', (key, value, opts) => { _storage[key] = value; });
 
-  mock('runTestSetup', () => {
-  //  for (const k in _storage) delete _storage[k];
-  });
+  function runTestSetup() {
+    _storage = {};
+  }
 
 
 ___NOTES___
 
-Created on 7/7/2025, 9:54:52 PM
+Created on 7/28/2025, 11:14:51 AM
 
 
