@@ -1,6 +1,8 @@
 homepage: "https://contimo.io/"
 documentation: "https://docs.contimo.app/platform-usage/conversion-tracking-with-gtm"
 versions:
+  - sha: 0010f80abdbd21e3ca77001b5480cf5f7a2d308c
+    changeNotes: Minor fixes
   - sha: 861a22312ce31c6b4716ec453e86424a3aa75501
     changeNotes: Added tests
   - sha: c4620bd07ed800b377f091256b160a2ff76428b1
