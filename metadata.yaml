@@ -1,6 +1,8 @@
 homepage: "https://contimo.io/"
 documentation: "https://docs.contimo.app/platform-usage/conversion-tracking-with-gtm"
 versions:
+  - sha: 46f9a13e69a19aee4b81a80c8cc0e476a8dbe77e
+    changeNotes: Added TTL support for Click ID, to customise lookback period.
   - sha: 0010f80abdbd21e3ca77001b5480cf5f7a2d308c
     changeNotes: Minor fixes
   - sha: 861a22312ce31c6b4716ec453e86424a3aa75501
