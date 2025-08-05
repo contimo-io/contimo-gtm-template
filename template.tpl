@@ -68,6 +68,22 @@ ___TEMPLATE_PARAMETERS___
     "defaultValue": "sclid"
   },
   {
+    "type": "TEXT",
+    "name": "clickid_ttl",
+    "displayName": "Click ID storage duration",
+    "simpleValueType": true,
+    "valueUnit": "days",
+    "enablingConditions": [
+      {
+        "paramName": "action",
+        "paramValue": "init",
+        "type": "EQUALS"
+      }
+    ],
+    "defaultValue": 30,
+    "valueHint": "How many days Click ID will be persisted, to attribute conversions"
+  },
+  {
     "type": "SELECT",
     "name": "conversion_type",
     "displayName": "Conversion type",
@@ -175,11 +191,14 @@ const setCookie          = require('setCookie');
 const sendPixel          = require('sendPixel');
 const encodeUriComponent = require('encodeUriComponent');
 const logToConsole       = require('logToConsole');
+const getTimestampMillis = require('getTimestampMillis');
 
 const STORAGE_KEY = 'contimo_clickId';
+const STORAGE_EXP_KEY = 'contimo_clickId_exp';
 
 function init(data) {
   const clickid_param = data.clickid_param;
+  const ttl_days = data.clickid_ttl || 30;
 
   // Guard: require URL permission
   if (!queryPermission('get_url', 'query', clickid_param)) {
@@ -199,9 +218,12 @@ function init(data) {
   if (queryPermission('access_local_storage', 'write', STORAGE_KEY)) {
       logToConsole('writing to storage', STORAGE_KEY, clickId);
       localStorage.setItem(STORAGE_KEY, clickId);
+      const exp = getTimestampMillis() + ttl_days * 24 * 60 * 60 * 1000;
+      localStorage.setItem(STORAGE_EXP_KEY, exp);
       data.gtmOnSuccess();
   } else if (queryPermission('set_cookies', STORAGE_KEY)) {
-    setCookie(STORAGE_KEY, clickId, { path: '/' });
+    const cookieOptions = { 'path': '/', 'max-age': ttl_days * 24 * 60 * 60 };
+    setCookie(STORAGE_KEY, clickId, cookieOptions);
     data.gtmOnSuccess();
   }
 }
@@ -211,6 +233,10 @@ function trackConversion(data) {
   let clickId;
   if (queryPermission('access_local_storage', 'read', STORAGE_KEY)) {
     clickId = localStorage.getItem(STORAGE_KEY);
+    let clickIdExp = localStorage.getItem(STORAGE_EXP_KEY);
+    if (getTimestampMillis() > clickIdExp) {
+      clickId = null;
+    }
   } else if (queryPermission('get_cookies', STORAGE_KEY)) {
     const cookies = getCookieValues(STORAGE_KEY);
     clickId = (cookies && cookies[0]);
@@ -289,6 +315,10 @@ ___WEB_PERMISSIONS___
               {
                 "type": 1,
                 "string": "contimo_clickId"
+              },
+              {
+                "type": 1,
+                "string": "contimo_clickId_exp"
               }
             ]
           }
@@ -332,6 +362,37 @@ ___WEB_PERMISSIONS___
                   {
                     "type": 1,
                     "string": "contimo_clickId"
+                  },
+                  {
+                    "type": 8,
+                    "boolean": true
+                  },
+                  {
+                    "type": 8,
+                    "boolean": true
+                  }
+                ]
+              },
+              {
+                "type": 3,
+                "mapKey": [
+                  {
+                    "type": 1,
+                    "string": "key"
+                  },
+                  {
+                    "type": 1,
+                    "string": "read"
+                  },
+                  {
+                    "type": 1,
+                    "string": "write"
+                  }
+                ],
+                "mapValue": [
+                  {
+                    "type": 1,
+                    "string": "contimo_clickId_exp"
                   },
                   {
                     "type": 8,
@@ -515,7 +576,7 @@ scenarios:
     // Arrange
     runTestSetup();
 
-    const mockData = { action: 'init', clickid_param: 'cid' };
+    const mockData = { action: 'init', clickid_param: 'cid', clickid_ttl: 1 };
 
     // Simulate finding ?cid=ABC123
     mock('getQueryParameters', (paramName) => {
@@ -526,6 +587,8 @@ scenarios:
       return;
     });
 
+    mock('getTimestampMillis', () => 1000);
+
 
     // Act
     runCode(mockData);
@@ -534,33 +597,39 @@ scenarios:
 
     // Assert
     assertApi('getQueryParameters').wasCalledWith('cid', false);
-    assertThat(_storage).isEqualTo({"contimo_clickId":"ABC123"});
+    assertThat(_storage).isEqualTo({"contimo_clickId":"ABC123", "contimo_clickId_exp": 1000 + 1 * 24 * 60 * 60 * 1000});
     assertApi('gtmOnSuccess').wasCalled();
 - name: Fire converstion (purchase) pixel
   code: "const mockData = {\n  action: 'track_conversion', \n  conversion_type: 'purchase',\n\
     \  revenue_currency: 'DKK',\n  revenue: '10',\n  gtmOnSuccess: function() { },\n\
-    \  gtmOnFailure: function() { }\n};\n\n_storage.contimo_clickId = 'ABC123';\n\n\
-    const expectedUrl = 'https://aj2438.online/at?actionKey=b4e4e9ac23c8742163c2ffa1edd2e2fc-229-0&actionData=ABC123&cp.revenue=10DKK&cp.ct=purchase&cp.source=gtm';\n\
+    \  gtmOnFailure: function() { }\n};\n\nmock('getTimestampMillis', () => 1000);\n\
+    \n_storage.contimo_clickId = 'ABC123';\n_storage.contimo_clickId_exp = 2000;\n\
+    \nconst expectedUrl = 'https://aj2438.online/at?actionKey=b4e4e9ac23c8742163c2ffa1edd2e2fc-229-0&actionData=ABC123&cp.revenue=10DKK&cp.ct=purchase&cp.source=gtm';\n\
     \nrunCode(mockData);\n\nlogToConsole(mockData);\n\n// Verify that the tag finished\
     \ successfully.\nassertApi('sendPixel').wasCalledWith(expectedUrl);\nassertApi('gtmOnSuccess').wasCalled();\
     \  "
 - name: Fire converstion (qualified_visit) pixel
   code: "const mockData = {\n  action: 'track_conversion', \n  conversion_type: 'qualified_visit',\n\
-    \  gtmOnSuccess: function() { },\n  gtmOnFailure: function() { }\n};\n\n_storage.contimo_clickId\
-    \ = 'ABC123';\n\nconst expectedUrl = 'https://aj2438.online/at?actionKey=b4e4e9ac23c8742163c2ffa1edd2e2fc-229-0&actionData=ABC123&cp.ct=qualified_visit&cp.source=gtm';\n\
-    \nmock('sendPixel', function(url, onSuccess, onFailure) {\n  assertThat(url).isEqualTo(expectedUrl);\n\
-    \  assertThat(typeof onSuccess).isEqualTo('function');\n  assertThat(typeof onFailure).isEqualTo('function');\n\
-    });\n\nrunCode(mockData);\n\nlogToConsole(mockData);\n\n// Verify that the tag\
-    \ finished successfully.\nassertApi('sendPixel').wasCalled();"
+    \  gtmOnSuccess: function() { },\n  gtmOnFailure: function() { }\n};\n\nmock('getTimestampMillis',\
+    \ () => 1000);\n\n_storage.contimo_clickId = 'ABC123';\n_storage.contimo_clickId_exp\
+    \ = 2000;\n\nconst expectedUrl = 'https://aj2438.online/at?actionKey=b4e4e9ac23c8742163c2ffa1edd2e2fc-229-0&actionData=ABC123&cp.ct=qualified_visit&cp.source=gtm';\n\
+    \nrunCode(mockData);\n\nlogToConsole(mockData);\n\n// Verify that the tag finished\
+    \ successfully.\nassertApi('sendPixel').wasCalledWith(expectedUrl);"
 - name: Make urlEscape & custom parameters
   code: "const mockData = {\n  action: 'track_conversion', \n  conversion_type: 'purchase',\n\
     \  revenue_currency: 'DKK',\n  revenue: '10',\n  params: [\n    { key: \"a\",\
-    \ value: \"b=\" }\n  ]\n};\n\n_storage.contimo_clickId = 'ABC&123';\n\nconst expectedUrl\
-    \ = 'https://aj2438.online/at?actionKey=b4e4e9ac23c8742163c2ffa1edd2e2fc-229-0&actionData=ABC%26123&cp.revenue=10DKK&cp.ct=purchase&cp.a=b%3D&cp.source=gtm';\n\
-    \nmock('sendPixel', function(url, onSuccess, onFailure) {\n  assertThat(url).isEqualTo(expectedUrl);\n\
-    \  assertThat(typeof onSuccess).isEqualTo('function');\n  assertThat(typeof onFailure).isEqualTo('function');\n\
-    });\n\nrunCode(mockData);\n\nlogToConsole(mockData);\n\n// Verify that the tag\
-    \ finished successfully.\nassertApi('sendPixel').wasCalled();"
+    \ value: \"b=\" }\n  ]\n};\n\nmock('getTimestampMillis', () => 1000);\n\n_storage.contimo_clickId\
+    \ = 'ABC&123';\n_storage.contimo_clickId_exp = 2000;\n\n\nconst expectedUrl =\
+    \ 'https://aj2438.online/at?actionKey=b4e4e9ac23c8742163c2ffa1edd2e2fc-229-0&actionData=ABC%26123&cp.revenue=10DKK&cp.ct=purchase&cp.a=b%3D&cp.source=gtm';\n\
+    \nrunCode(mockData);\n\nlogToConsole(mockData);\n\n// Verify that the tag finished\
+    \ successfully.\nassertApi('sendPixel').wasCalledWith(expectedUrl);"
+- name: Don't track if TTL passed
+  code: "const mockData = {\n  action: 'track_conversion', \n  conversion_type: 'purchase',\n\
+    \  revenue_currency: 'DKK',\n  revenue: '10',\n  gtmOnSuccess: function() { },\n\
+    \  gtmOnFailure: function() { }\n};\n\nmock('getTimestampMillis', () => 1000);\n\
+    \n_storage.contimo_clickId = 'ABC123';\n_storage.contimo_clickId_exp = 500;\n\n\
+    \nrunCode(mockData);\n\n\n// Verify that the tag finished successfully.\nassertApi('sendPixel').wasNotCalled();\n\
+    assertApi('gtmOnSuccess').wasCalled();  "
 setup: |-
   const logToConsole       = require('logToConsole');
 
