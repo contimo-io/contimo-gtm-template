@@ -247,18 +247,19 @@ function trackConversion(data) {
     data.gtmOnSuccess();
   } else {
     // Build URL
-    let url = 'https://aj2438.online/at';
+    let url = 'https://signal.contimo.app/c/6939e6490f99e50e8abcd7c3/';
     const params = [
-      'actionKey=b4e4e9ac23c8742163c2ffa1edd2e2fc-229-0',
-      'actionData=' + encodeUriComponent(clickId)
+      'clid=' + encodeUriComponent(clickId)
     ];
     if (data.conversion_type === 'purchase') {
       params.push(
-        'cp.revenue=' +
-        encodeUriComponent((data.revenue || '') +
-                           (data.revenue_currency || ''))
+        'r=' + encodeUriComponent(data.revenue || '')
+      );
+      params.push(
+        'rc=' + encodeUriComponent(data.revenue_currency || '')
       );
     }
+    
     params.push('cp.ct=' + encodeUriComponent(data.conversion_type));
     
     (data.params || []).forEach(function(kv) { 
@@ -435,7 +436,7 @@ ___WEB_PERMISSIONS___
             "listItem": [
               {
                 "type": 1,
-                "string": "https://aj2438.online/*"
+                "string": "https://signal.contimo.app/*"
               }
             ]
           }
@@ -604,7 +605,7 @@ scenarios:
     \  revenue_currency: 'DKK',\n  revenue: '10',\n  gtmOnSuccess: function() { },\n\
     \  gtmOnFailure: function() { }\n};\n\nmock('getTimestampMillis', () => 1000);\n\
     \n_storage.contimo_clickId = 'ABC123';\n_storage.contimo_clickId_exp = 2000;\n\
-    \nconst expectedUrl = 'https://aj2438.online/at?actionKey=b4e4e9ac23c8742163c2ffa1edd2e2fc-229-0&actionData=ABC123&cp.revenue=10DKK&cp.ct=purchase&cp.source=gtm';\n\
+    \nconst expectedUrl = 'https://signal.contimo.app/c/6939e6490f99e50e8abcd7c3/?clid=ABC123&r=10&rc=DKK&cp.ct=purchase&cp.source=gtm';\n\
     \nrunCode(mockData);\n\nlogToConsole(mockData);\n\n// Verify that the tag finished\
     \ successfully.\nassertApi('sendPixel').wasCalledWith(expectedUrl);\nassertApi('gtmOnSuccess').wasCalled();\
     \  "
@@ -612,7 +613,7 @@ scenarios:
   code: "const mockData = {\n  action: 'track_conversion', \n  conversion_type: 'qualified_visit',\n\
     \  gtmOnSuccess: function() { },\n  gtmOnFailure: function() { }\n};\n\nmock('getTimestampMillis',\
     \ () => 1000);\n\n_storage.contimo_clickId = 'ABC123';\n_storage.contimo_clickId_exp\
-    \ = 2000;\n\nconst expectedUrl = 'https://aj2438.online/at?actionKey=b4e4e9ac23c8742163c2ffa1edd2e2fc-229-0&actionData=ABC123&cp.ct=qualified_visit&cp.source=gtm';\n\
+    \ = 2000;\n\nconst expectedUrl = 'https://signal.contimo.app/c/6939e6490f99e50e8abcd7c3/?clid=ABC123&cp.ct=qualified_visit&cp.source=gtm';\n\
     \nrunCode(mockData);\n\nlogToConsole(mockData);\n\n// Verify that the tag finished\
     \ successfully.\nassertApi('sendPixel').wasCalledWith(expectedUrl);"
 - name: Make urlEscape & custom parameters
@@ -620,7 +621,7 @@ scenarios:
     \  revenue_currency: 'DKK',\n  revenue: '10',\n  params: [\n    { key: \"a\",\
     \ value: \"b=\" }\n  ]\n};\n\nmock('getTimestampMillis', () => 1000);\n\n_storage.contimo_clickId\
     \ = 'ABC&123';\n_storage.contimo_clickId_exp = 2000;\n\n\nconst expectedUrl =\
-    \ 'https://aj2438.online/at?actionKey=b4e4e9ac23c8742163c2ffa1edd2e2fc-229-0&actionData=ABC%26123&cp.revenue=10DKK&cp.ct=purchase&cp.a=b%3D&cp.source=gtm';\n\
+    \ 'https://signal.contimo.app/c/6939e6490f99e50e8abcd7c3/?clid=ABC%26123&r=10&rc=DKK&cp.ct=purchase&cp.a=b%3D&cp.source=gtm';\n\
     \nrunCode(mockData);\n\nlogToConsole(mockData);\n\n// Verify that the tag finished\
     \ successfully.\nassertApi('sendPixel').wasCalledWith(expectedUrl);"
 - name: Don't track if TTL passed
