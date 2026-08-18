@@ -55,6 +55,25 @@ ___TEMPLATE_PARAMETERS___
   },
   {
     "type": "TEXT",
+    "name": "account_id",
+    "displayName": "Account ID",
+    "simpleValueType": true,
+    "help": "Copy it from Setup instructions on any event row in your campaign settings.",
+    "enablingConditions": [
+      {
+        "paramName": "action",
+        "paramValue": "init",
+        "type": "EQUALS"
+      }
+    ],
+    "valueValidators": [
+      {
+        "type": "NON_EMPTY"
+      }
+    ]
+  },
+  {
+    "type": "TEXT",
     "name": "clickid_param",
     "displayName": "Click ID parameter name",
     "simpleValueType": true,
@@ -81,7 +100,7 @@ ___TEMPLATE_PARAMETERS___
       }
     ],
     "defaultValue": 30,
-    "valueHint": "How many days Click ID will be persisted, to attribute conversions"
+    "valueHint": "How many days the Contimo Pixel persists the Click ID, to attribute conversions"
   },
   {
     "type": "SELECT",
@@ -96,6 +115,30 @@ ___TEMPLATE_PARAMETERS___
       {
         "value": "qualified_visit",
         "displayValue": "Qualified visit"
+      },
+      {
+        "value": "lead",
+        "displayValue": "Lead"
+      },
+      {
+        "value": "custom_conversion_1",
+        "displayValue": "Custom conversion 1"
+      },
+      {
+        "value": "custom_conversion_2",
+        "displayValue": "Custom conversion 2"
+      },
+      {
+        "value": "custom_conversion_3",
+        "displayValue": "Custom conversion 3"
+      },
+      {
+        "value": "custom_conversion_4",
+        "displayValue": "Custom conversion 4"
+      },
+      {
+        "value": "custom_conversion_5",
+        "displayValue": "Custom conversion 5"
       }
     ],
     "simpleValueType": true,
@@ -151,6 +194,21 @@ ___TEMPLATE_PARAMETERS___
     ]
   },
   {
+    "type": "TEXT",
+    "name": "transaction_id",
+    "displayName": "Transaction ID",
+    "simpleValueType": true,
+    "help": "Transaction ID, needed to reconcile any conversion data",
+    "canBeEmptyString": true,
+    "enablingConditions": [
+      {
+        "paramName": "action",
+        "paramValue": "track_conversion",
+        "type": "EQUALS"
+      }
+    ]
+  },
+  {
     "type": "SIMPLE_TABLE",
     "name": "params",
     "displayName": "Additional params (optional)",
@@ -182,105 +240,108 @@ ___TEMPLATE_PARAMETERS___
 ___SANDBOXED_JS_FOR_WEB_TEMPLATE___
 
 // Imports
-const queryPermission    = require('queryPermission');
-const getUrl             = require('getUrl');
-const getQueryParameters = require('getQueryParameters');
-const localStorage       = require('localStorage');
-const getCookieValues    = require('getCookieValues');
-const setCookie          = require('setCookie');
-const sendPixel          = require('sendPixel');
-const encodeUriComponent = require('encodeUriComponent');
-const logToConsole       = require('logToConsole');
-const getTimestampMillis = require('getTimestampMillis');
+const injectScript         = require('injectScript');
+const createArgumentsQueue = require('createArgumentsQueue');
+const copyFromWindow       = require('copyFromWindow');
+const callInWindow         = require('callInWindow');
+const makeNumber           = require('makeNumber');
+const logToConsole         = require('logToConsole');
 
-const STORAGE_KEY = 'contimo_clickId';
-const STORAGE_EXP_KEY = 'contimo_clickId_exp';
+const PIXEL_URL = 'https://scripts.contimo.app/pixel.js';
+const GLOBAL_FN = 'contimo';
+const GLOBAL_QUEUE = 'contimo.q';
+
+// Conversion types stored by containers published before the pixel migration. GTM keeps a
+// SELECT value even once it leaves selectItems, so those tags still send the old spelling.
+const LEGACY_CONVERSION_TYPES = {
+  customConversion1: 'custom_conversion_1',
+  customConversion2: 'custom_conversion_2',
+  customConversion3: 'custom_conversion_3',
+  customConversion4: 'custom_conversion_4',
+  customConversion5: 'custom_conversion_5'
+};
+
+// Reserved by the pixel's own transport — see "Parameter reference" in the Contimo docs.
+const RESERVED_PARAM_KEYS = ['u', 'pc', 'pt', 'pg', 'ap', 'op', 'cp'];
+
+function pixelIsPresent() {
+  return typeof copyFromWindow(GLOBAL_FN) === 'function';
+}
+
+// Stands up window.contimo as an arguments queue, exactly as the official snippet does.
+// The pixel drains window.contimo.q on load, so calls made before it arrives are not lost.
+// The dotted queue path is safe here because createArgumentsQueue creates the `contimo`
+// global first, then resolves `contimo.q` against it.
+function ensureQueue() {
+  createArgumentsQueue(GLOBAL_FN, GLOBAL_QUEUE);
+}
 
 function init(data) {
-  const clickid_param = data.clickid_param;
-  const ttl_days = data.clickid_ttl || 30;
-
-  // Guard: require URL permission
-  if (!queryPermission('get_url', 'query', clickid_param)) {
-    data.gtmOnFailure();
-    return;
-  }
-
-  // Guard: extract the click ID (e.g. “123” from “?sid=123”)
-  const clickId = getQueryParameters(clickid_param, false);
-  if (!clickId) {
+  // Mirrors the official snippet's `if (window.contimo) return` guard. Installing the pixel
+  // twice on one page is the usual cause of doubled conversion counts.
+  if (pixelIsPresent()) {
+    logToConsole('Contimo: pixel already installed on this page, skipping init.');
     data.gtmOnSuccess();
     return;
   }
-  logToConsole('clickId: ', clickId);
 
-  // Store the click ID where permitted
-  if (queryPermission('access_local_storage', 'write', STORAGE_KEY)) {
-      logToConsole('writing to storage', STORAGE_KEY, clickId);
-      localStorage.setItem(STORAGE_KEY, clickId);
-      const exp = getTimestampMillis() + ttl_days * 24 * 60 * 60 * 1000;
-      localStorage.setItem(STORAGE_EXP_KEY, exp);
-      data.gtmOnSuccess();
-  } else if (queryPermission('set_cookies', STORAGE_KEY)) {
-    const cookieOptions = { 'path': '/', 'max-age': ttl_days * 24 * 60 * 60 };
-    setCookie(STORAGE_KEY, clickId, cookieOptions);
-    data.gtmOnSuccess();
+  ensureQueue();
+
+  callInWindow(GLOBAL_FN, 'init', data.account_id, {
+    click_id_param: data.clickid_param || 'sclid',
+    click_id_ttl_days: makeNumber(data.clickid_ttl) || 30
+  });
+
+  injectScript(PIXEL_URL, data.gtmOnSuccess, data.gtmOnFailure, GLOBAL_FN);
+}
+
+function buildParams(data) {
+  const params = {};
+
+  if (data.transaction_id) {
+    params.transaction_id = data.transaction_id;
   }
+
+  // The pixel requires currency whenever value is sent, so they travel together or not at all.
+  // An empty revenue field must not become value: 0.
+  if (data.conversion_type === 'purchase' && data.revenue) {
+    params.value = makeNumber(data.revenue);
+    params.currency = data.revenue_currency;
+  }
+
+  (data.params || []).forEach(function (kv) {
+    if (!kv.key) return;
+    if (RESERVED_PARAM_KEYS.indexOf(kv.key) !== -1) {
+      logToConsole('Contimo: skipping reserved parameter key "' + kv.key + '".');
+      return;
+    }
+    params[kv.key] = kv.value;
+  });
+
+  params.source = 'gtm';
+
+  return params;
 }
 
 function trackConversion(data) {
-    // Retrieve clickId
-  let clickId;
-  if (queryPermission('access_local_storage', 'read', STORAGE_KEY)) {
-    clickId = localStorage.getItem(STORAGE_KEY);
-    let clickIdExp = localStorage.getItem(STORAGE_EXP_KEY);
-    if (getTimestampMillis() > clickIdExp) {
-      clickId = null;
-    }
-  } else if (queryPermission('get_cookies', STORAGE_KEY)) {
-    const cookies = getCookieValues(STORAGE_KEY);
-    clickId = (cookies && cookies[0]);
+  if (!pixelIsPresent()) {
+    // Queue anyway: an Init tag firing later in the same page load still drains the queue.
+    logToConsole(
+      'Contimo: pixel not loaded yet. Queueing the conversion. If it never arrives, add a ' +
+      'Contimo tag with Action = Init on an All Pages trigger.'
+    );
+    ensureQueue();
   }
 
-  if (!clickId) {
-    // Nothing to fire
-    data.gtmOnSuccess();
-  } else {
-    // Build URL
-    let url = 'https://signal.contimo.app/c/6939e6490f99e50e8abcd7c3/';
-    const params = [
-      'clid=' + encodeUriComponent(clickId)
-    ];
-    if (data.conversion_type === 'purchase') {
-      params.push(
-        'r=' + encodeUriComponent(data.revenue || '')
-      );
-      params.push(
-        'rc=' + encodeUriComponent(data.revenue_currency || '')
-      );
-    }
-    
-    params.push('cp.ct=' + encodeUriComponent(data.conversion_type));
-    
-    (data.params || []).forEach(function(kv) { 
-      let key = encodeUriComponent(kv.key);
-      let value = encodeUriComponent(kv.value);
-      params.push(['cp.', key, '=', value].join('')); 
-    });
+  const action = LEGACY_CONVERSION_TYPES[data.conversion_type] || data.conversion_type;
+  const params = buildParams(data);
 
-    params.push('cp.source=gtm');
-    
+  logToConsole('Contimo: track', action, params);
 
-    url += '?' + params.join('&');
-    logToConsole(url);
-
-     // We use optimistic, because response is not an image, which GTM checks
-    sendPixel(url);
-    data.gtmOnSuccess(); 
-  }
+  callInWindow(GLOBAL_FN, 'track', action, params);
+  data.gtmOnSuccess();
 }
 
-//logToConsole(data);
 if (data.action === 'init') {
   init(data);
 } else if (data.action === 'track_conversion') {
