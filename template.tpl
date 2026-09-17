@@ -103,6 +103,21 @@ ___TEMPLATE_PARAMETERS___
     "valueHint": "How many days the Contimo Pixel persists the Click ID, to attribute conversions"
   },
   {
+    "type": "CHECKBOX",
+    "name": "send_unattributed",
+    "displayName": "Send unattributed events",
+    "simpleValueType": true,
+    "defaultValue": false,
+    "help": "Still ping Contimo when no Click ID (and no Visitor ID match) is found. Such events appear in Event testing as unattributed.",
+    "enablingConditions": [
+      {
+        "paramName": "action",
+        "paramValue": "init",
+        "type": "EQUALS"
+      }
+    ]
+  },
+  {
     "type": "SELECT",
     "name": "conversion_type",
     "displayName": "Conversion type",
@@ -288,8 +303,9 @@ function init(data) {
   ensureQueue();
 
   callInWindow(GLOBAL_FN, 'init', data.account_id, {
-    click_id_param: data.clickid_param || 'sclid',
-    click_id_ttl_days: makeNumber(data.clickid_ttl) || 30
+    click_id_key: data.clickid_param || 'sclid',
+    click_id_ttl_days: makeNumber(data.clickid_ttl) || 30,
+    send_unattributed: !!data.send_unattributed
   });
 
   injectScript(PIXEL_URL, data.gtmOnSuccess, data.gtmOnFailure, GLOBAL_FN);
@@ -633,89 +649,117 @@ ___WEB_PERMISSIONS___
 ___TESTS___
 
 scenarios:
-- name: Persists to Local Storage
+- name: Init uses default click ID key, TTL and send_unattributed
   code: |-
-    // Arrange
-    runTestSetup();
+    const mockData = { action: 'init', account_id: 'ACC123' };
 
-    const mockData = { action: 'init', clickid_param: 'cid', clickid_ttl: 1 };
-
-    // Simulate finding ?cid=ABC123
-    mock('getQueryParameters', (paramName) => {
-      logToConsole('paramName: ', paramName);
-      if (paramName === 'cid') {
-        return 'ABC123';
-      }
-      return;
-    });
-
-    mock('getTimestampMillis', () => 1000);
-
-
-    // Act
     runCode(mockData);
 
-    logToConsole(_storage);
-
-    // Assert
-    assertApi('getQueryParameters').wasCalledWith('cid', false);
-    assertThat(_storage).isEqualTo({"contimo_clickId":"ABC123", "contimo_clickId_exp": 1000 + 1 * 24 * 60 * 60 * 1000});
+    assertApi('callInWindow').wasCalledWith('contimo', 'init', 'ACC123', {
+      click_id_key: 'sclid',
+      click_id_ttl_days: 30,
+      send_unattributed: false
+    });
     assertApi('gtmOnSuccess').wasCalled();
-- name: Fire converstion (purchase) pixel
-  code: "const mockData = {\n  action: 'track_conversion', \n  conversion_type: 'purchase',\n\
-    \  revenue_currency: 'DKK',\n  revenue: '10',\n  gtmOnSuccess: function() { },\n\
-    \  gtmOnFailure: function() { }\n};\n\nmock('getTimestampMillis', () => 1000);\n\
-    \n_storage.contimo_clickId = 'ABC123';\n_storage.contimo_clickId_exp = 2000;\n\
-    \nconst expectedUrl = 'https://signal.contimo.app/c/6939e6490f99e50e8abcd7c3/?clid=ABC123&r=10&rc=DKK&cp.ct=purchase&cp.source=gtm';\n\
-    \nrunCode(mockData);\n\nlogToConsole(mockData);\n\n// Verify that the tag finished\
-    \ successfully.\nassertApi('sendPixel').wasCalledWith(expectedUrl);\nassertApi('gtmOnSuccess').wasCalled();\
-    \  "
-- name: Fire converstion (qualified_visit) pixel
-  code: "const mockData = {\n  action: 'track_conversion', \n  conversion_type: 'qualified_visit',\n\
-    \  gtmOnSuccess: function() { },\n  gtmOnFailure: function() { }\n};\n\nmock('getTimestampMillis',\
-    \ () => 1000);\n\n_storage.contimo_clickId = 'ABC123';\n_storage.contimo_clickId_exp\
-    \ = 2000;\n\nconst expectedUrl = 'https://signal.contimo.app/c/6939e6490f99e50e8abcd7c3/?clid=ABC123&cp.ct=qualified_visit&cp.source=gtm';\n\
-    \nrunCode(mockData);\n\nlogToConsole(mockData);\n\n// Verify that the tag finished\
-    \ successfully.\nassertApi('sendPixel').wasCalledWith(expectedUrl);"
-- name: Make urlEscape & custom parameters
-  code: "const mockData = {\n  action: 'track_conversion', \n  conversion_type: 'purchase',\n\
-    \  revenue_currency: 'DKK',\n  revenue: '10',\n  params: [\n    { key: \"a\",\
-    \ value: \"b=\" }\n  ]\n};\n\nmock('getTimestampMillis', () => 1000);\n\n_storage.contimo_clickId\
-    \ = 'ABC&123';\n_storage.contimo_clickId_exp = 2000;\n\n\nconst expectedUrl =\
-    \ 'https://signal.contimo.app/c/6939e6490f99e50e8abcd7c3/?clid=ABC%26123&r=10&rc=DKK&cp.ct=purchase&cp.a=b%3D&cp.source=gtm';\n\
-    \nrunCode(mockData);\n\nlogToConsole(mockData);\n\n// Verify that the tag finished\
-    \ successfully.\nassertApi('sendPixel').wasCalledWith(expectedUrl);"
-- name: Don't track if TTL passed
-  code: "const mockData = {\n  action: 'track_conversion', \n  conversion_type: 'purchase',\n\
-    \  revenue_currency: 'DKK',\n  revenue: '10',\n  gtmOnSuccess: function() { },\n\
-    \  gtmOnFailure: function() { }\n};\n\nmock('getTimestampMillis', () => 1000);\n\
-    \n_storage.contimo_clickId = 'ABC123';\n_storage.contimo_clickId_exp = 500;\n\n\
-    \nrunCode(mockData);\n\n\n// Verify that the tag finished successfully.\nassertApi('sendPixel').wasNotCalled();\n\
-    assertApi('gtmOnSuccess').wasCalled();  "
+- name: Init passes custom click ID param, TTL and send_unattributed
+  code: |-
+    const mockData = {
+      action: 'init',
+      account_id: 'ACC456',
+      clickid_param: 'cid',
+      clickid_ttl: 7,
+      send_unattributed: true
+    };
+
+    runCode(mockData);
+
+    assertApi('callInWindow').wasCalledWith('contimo', 'init', 'ACC456', {
+      click_id_key: 'cid',
+      click_id_ttl_days: 7,
+      send_unattributed: true
+    });
+    assertApi('gtmOnSuccess').wasCalled();
+- name: Init skips when pixel is already installed
+  code: |-
+    mock('copyFromWindow', (name) => name === 'contimo' ? function () {} : undefined);
+
+    const mockData = { action: 'init', account_id: 'ACC123' };
+
+    runCode(mockData);
+
+    assertApi('callInWindow').wasNotCalled();
+    assertApi('injectScript').wasNotCalled();
+    assertApi('gtmOnSuccess').wasCalled();
+- name: Tracks purchase conversion with revenue and currency
+  code: |-
+    const mockData = {
+      action: 'track_conversion',
+      conversion_type: 'purchase',
+      revenue_currency: 'DKK',
+      revenue: '10'
+    };
+
+    runCode(mockData);
+
+    assertApi('callInWindow').wasCalledWith('contimo', 'track', 'purchase', {
+      value: 10,
+      currency: 'DKK',
+      source: 'gtm'
+    });
+    assertApi('gtmOnSuccess').wasCalled();
+- name: Tracks qualified_visit conversion without revenue fields
+  code: |-
+    const mockData = {
+      action: 'track_conversion',
+      conversion_type: 'qualified_visit'
+    };
+
+    runCode(mockData);
+
+    assertApi('callInWindow').wasCalledWith('contimo', 'track', 'qualified_visit', {
+      source: 'gtm'
+    });
+    assertApi('gtmOnSuccess').wasCalled();
+- name: Tracks conversion with custom params and skips reserved keys
+  code: |-
+    const mockData = {
+      action: 'track_conversion',
+      conversion_type: 'lead',
+      transaction_id: 'txn-1',
+      params: [
+        { key: 'a', value: 'b=' },
+        { key: 'u', value: 'should-be-skipped' }
+      ]
+    };
+
+    runCode(mockData);
+
+    assertApi('callInWindow').wasCalledWith('contimo', 'track', 'lead', {
+      transaction_id: 'txn-1',
+      a: 'b=',
+      source: 'gtm'
+    });
+    assertApi('gtmOnSuccess').wasCalled();
+- name: Maps legacy custom conversion type spellings
+  code: |-
+    const mockData = {
+      action: 'track_conversion',
+      conversion_type: 'customConversion2'
+    };
+
+    runCode(mockData);
+
+    assertApi('callInWindow').wasCalledWith('contimo', 'track', 'custom_conversion_2', {
+      source: 'gtm'
+    });
+    assertApi('gtmOnSuccess').wasCalled();
 setup: |-
-  const logToConsole       = require('logToConsole');
+  const logToConsole = require('logToConsole');
 
-  mock('queryPermission', (perm) => {
-    return true;
-  });
-
-  let _storage = {};
-  let _stubUrlValue = '';
-  mock('getUrl', (_type, _encode, _name, paramName) => {
-    return _stubUrlValue;
-  });
-
-  mockObject('localStorage', {
-    getItem: (key) => _storage[key] || null,
-    setItem: (key, value) => { _storage[key] = value; }
-  });
-
-  mock('getCookieValues', (key) => _storage[key] ? [ _storage[key] ] : []);
-  mock('setCookie', (key, value, opts) => { _storage[key] = value; });
-
-  function runTestSetup() {
-    _storage = {};
-  }
+  mock('queryPermission', () => true);
+  mock('copyFromWindow', () => undefined);
+  mock('createArgumentsQueue', () => {});
+  mock('injectScript', (url, onSuccess, onFailure) => { onSuccess(); });
 
 
 ___NOTES___
