@@ -261,10 +261,16 @@ const copyFromWindow       = require('copyFromWindow');
 const callInWindow         = require('callInWindow');
 const makeNumber           = require('makeNumber');
 const logToConsole         = require('logToConsole');
+const isConsentGranted     = require('isConsentGranted');
+const addConsentListener   = require('addConsentListener');
 
 const PIXEL_URL = 'https://scripts.contimo.app/pixel.js';
 const GLOBAL_FN = 'contimo';
 const GLOBAL_QUEUE = 'contimo.q';
+// Google Consent Mode type the pixel needs before it persists the Click ID. The pixel uses
+// it only when no TCF or Shopify CMP answers on the page. GTM treats an unset type as
+// granted, same as Google's own tags.
+const CONSENT_TYPE = 'ad_storage';
 
 // Conversion types stored by containers published before the pixel migration. GTM keeps a
 // SELECT value even once it leaves selectItems, so those tags still send the old spelling.
@@ -291,6 +297,18 @@ function ensureQueue() {
   createArgumentsQueue(GLOBAL_FN, GLOBAL_QUEUE);
 }
 
+function consentValue(granted) {
+  return granted ? 'granted' : 'denied';
+}
+
+// The CMP often updates consent after the init tag fired (Consent Mode default 'denied' +
+// wait_for_update). Forward every change so the pixel can persist the Click ID late.
+function forwardConsentUpdates() {
+  addConsentListener(CONSENT_TYPE, (consentType, granted) => {
+    callInWindow(GLOBAL_FN, 'set', 'consent', consentValue(granted));
+  });
+}
+
 function init(data) {
   // Mirrors the official snippet's `if (window.contimo) return` guard. Installing the pixel
   // twice on one page is the usual cause of doubled conversion counts.
@@ -305,8 +323,10 @@ function init(data) {
   callInWindow(GLOBAL_FN, 'init', data.account_id, {
     click_id_key: data.clickid_param || 'sclid',
     click_id_ttl_days: makeNumber(data.clickid_ttl) || 30,
-    debug_logging: !!data.debug_logging
+    debug_logging: !!data.debug_logging,
+    consent: consentValue(isConsentGranted(CONSENT_TYPE))
   });
+  forwardConsentUpdates();
 
   injectScript(PIXEL_URL, data.gtmOnSuccess, data.gtmOnFailure, GLOBAL_FN);
 }
@@ -517,6 +537,59 @@ ___WEB_PERMISSIONS___
       "isEditedByUser": true
     },
     "isRequired": true
+  },
+  {
+    "instance": {
+      "key": {
+        "publicId": "access_consent",
+        "versionId": "1"
+      },
+      "param": [
+        {
+          "key": "consentTypes",
+          "value": {
+            "type": 2,
+            "listItem": [
+              {
+                "type": 3,
+                "mapKey": [
+                  {
+                    "type": 1,
+                    "string": "consentType"
+                  },
+                  {
+                    "type": 1,
+                    "string": "read"
+                  },
+                  {
+                    "type": 1,
+                    "string": "write"
+                  }
+                ],
+                "mapValue": [
+                  {
+                    "type": 1,
+                    "string": "ad_storage"
+                  },
+                  {
+                    "type": 8,
+                    "boolean": true
+                  },
+                  {
+                    "type": 8,
+                    "boolean": false
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "clientAnnotations": {
+      "isEditedByUser": true
+    },
+    "isRequired": true
   }
 ]
 
@@ -533,7 +606,8 @@ scenarios:
     assertApi('callInWindow').wasCalledWith('contimo', 'init', 'ACC123', {
       click_id_key: 'sclid',
       click_id_ttl_days: 30,
-      debug_logging: false
+      debug_logging: false,
+      consent: 'granted'
     });
     assertApi('gtmOnSuccess').wasCalled();
 - name: Init passes custom click ID param and TTL
@@ -550,7 +624,8 @@ scenarios:
     assertApi('callInWindow').wasCalledWith('contimo', 'init', 'ACC456', {
       click_id_key: 'cid',
       click_id_ttl_days: 7,
-      debug_logging: false
+      debug_logging: false,
+      consent: 'granted'
     });
     assertApi('gtmOnSuccess').wasCalled();
 - name: Init passes debug_logging true when enabled
@@ -566,9 +641,35 @@ scenarios:
     assertApi('callInWindow').wasCalledWith('contimo', 'init', 'ACC789', {
       click_id_key: 'sclid',
       click_id_ttl_days: 30,
-      debug_logging: true
+      debug_logging: true,
+      consent: 'granted'
     });
     assertApi('gtmOnSuccess').wasCalled();
+- name: Init passes denied ad_storage consent
+  code: |-
+    mock('isConsentGranted', (type) => false);
+
+    runCode({ action: 'init', account_id: 'ACC123' });
+
+    assertApi('isConsentGranted').wasCalledWith('ad_storage');
+    assertApi('callInWindow').wasCalledWith('contimo', 'init', 'ACC123', {
+      click_id_key: 'sclid',
+      click_id_ttl_days: 30,
+      debug_logging: false,
+      consent: 'denied'
+    });
+- name: Init forwards later ad_storage consent changes to the pixel
+  code: |-
+    let listener;
+    mock('addConsentListener', (type, fn) => { listener = fn; });
+
+    runCode({ action: 'init', account_id: 'ACC123' });
+
+    assertApi('addConsentListener').wasCalled();
+    listener('ad_storage', true);
+    assertApi('callInWindow').wasCalledWith('contimo', 'set', 'consent', 'granted');
+    listener('ad_storage', false);
+    assertApi('callInWindow').wasCalledWith('contimo', 'set', 'consent', 'denied');
 - name: Init skips when pixel is already installed
   code: |-
     mock('copyFromWindow', (name) => name === 'contimo' ? function () {} : undefined);
@@ -579,6 +680,7 @@ scenarios:
 
     assertApi('callInWindow').wasNotCalled();
     assertApi('injectScript').wasNotCalled();
+    assertApi('addConsentListener').wasNotCalled();
     assertApi('gtmOnSuccess').wasCalled();
 - name: Tracks purchase conversion with revenue and currency
   code: |-
@@ -650,6 +752,8 @@ setup: |-
   mock('copyFromWindow', () => undefined);
   mock('createArgumentsQueue', () => {});
   mock('injectScript', (url, onSuccess, onFailure) => { onSuccess(); });
+  mock('isConsentGranted', (type) => true);
+  mock('addConsentListener', (type, fn) => {});
 
 
 ___NOTES___
