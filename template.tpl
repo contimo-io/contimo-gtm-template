@@ -118,6 +118,21 @@ ___TEMPLATE_PARAMETERS___
     ]
   },
   {
+    "type": "CHECKBOX",
+    "name": "debug_logging",
+    "displayName": "Detailed logging (Debug only)",
+    "simpleValueType": true,
+    "defaultValue": false,
+    "help": "Sends a debug event to Contimo when no Click ID is found, on init and on later track calls. The events are visible in all live Event testing sessions of the account. For debugging only; leave off in normal operation.",
+    "enablingConditions": [
+      {
+        "paramName": "action",
+        "paramValue": "init",
+        "type": "EQUALS"
+      }
+    ]
+  },
+  {
     "type": "SELECT",
     "name": "conversion_type",
     "displayName": "Conversion type",
@@ -305,7 +320,8 @@ function init(data) {
   callInWindow(GLOBAL_FN, 'init', data.account_id, {
     click_id_key: data.clickid_param || 'sclid',
     click_id_ttl_days: makeNumber(data.clickid_ttl) || 30,
-    send_unattributed: !!data.send_unattributed
+    send_unattributed: !!data.send_unattributed,
+    debug_logging: !!data.debug_logging
   });
 
   injectScript(PIXEL_URL, data.gtmOnSuccess, data.gtmOnFailure, GLOBAL_FN);
@@ -658,7 +674,8 @@ scenarios:
     assertApi('callInWindow').wasCalledWith('contimo', 'init', 'ACC123', {
       click_id_key: 'sclid',
       click_id_ttl_days: 30,
-      send_unattributed: false
+      send_unattributed: false,
+      debug_logging: false
     });
     assertApi('gtmOnSuccess').wasCalled();
 - name: Init passes custom click ID param, TTL and send_unattributed
@@ -676,7 +693,25 @@ scenarios:
     assertApi('callInWindow').wasCalledWith('contimo', 'init', 'ACC456', {
       click_id_key: 'cid',
       click_id_ttl_days: 7,
-      send_unattributed: true
+      send_unattributed: true,
+      debug_logging: false
+    });
+    assertApi('gtmOnSuccess').wasCalled();
+- name: Init passes debug_logging true when enabled
+  code: |-
+    const mockData = {
+      action: 'init',
+      account_id: 'ACC789',
+      debug_logging: true
+    };
+
+    runCode(mockData);
+
+    assertApi('callInWindow').wasCalledWith('contimo', 'init', 'ACC789', {
+      click_id_key: 'sclid',
+      click_id_ttl_days: 30,
+      send_unattributed: false,
+      debug_logging: true
     });
     assertApi('gtmOnSuccess').wasCalled();
 - name: Init skips when pixel is already installed
