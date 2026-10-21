@@ -1,6 +1,8 @@
 homepage: "https://contimo.io/"
 documentation: "https://docs.contimo.app/platform-usage/conversion-tracking-with-gtm"
 versions:
+  - sha: 320c47283c3b5bcac0aa0366cae09abe7735c15b
+    changeNotes: Fixed ignored click ID param/TTL init options, added Send unattributed events.
   - sha: 5cd69e8532864ca02c32f652bbd72509838c75f8
     changeNotes: Added new Conversion tracking events
   - sha: cdf16686acec6ea6bb46f40cfaec03d1b79ec99d
