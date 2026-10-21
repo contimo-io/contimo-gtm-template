@@ -1,6 +1,8 @@
 homepage: "https://contimo.io/"
 documentation: "https://docs.contimo.app/platform-usage/conversion-tracking-with-gtm"
 versions:
+  - sha: 0c1c3d1774aa18f27ee832836fc1543f4d8640b1
+    changeNotes: Loads the Contimo Pixel (scripts.contimo.app/pixel.js) instead of sending events directly. Adds detailed debug logging and forwards Google Consent Mode (ad_storage) to the pixel, so the Click ID is persisted once consent is granted.
   - sha: 5cd69e8532864ca02c32f652bbd72509838c75f8
     changeNotes: Added new Conversion tracking events
   - sha: cdf16686acec6ea6bb46f40cfaec03d1b79ec99d
